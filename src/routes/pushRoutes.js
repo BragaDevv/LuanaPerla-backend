@@ -26,7 +26,7 @@ router.post("/send-test", async (req, res) => {
       [token],
       title || "Teste",
       body || "Push funcionando",
-      data || {}
+      data || {},
     );
 
     return res.json(result);
@@ -75,7 +75,7 @@ router.post("/notify-admins-new-order", async (req, res) => {
         type: "new_order",
         pedidoId,
         screen: "AdminOrders",
-      }
+      },
     );
 
     return res.json(result);
@@ -90,7 +90,7 @@ router.post("/notify-admins-new-order", async (req, res) => {
 
 router.post("/notify-client-order-status", async (req, res) => {
   try {
-    const { clienteId, pedidoId, status } = req.body;
+    const { clienteId, pedidoId, status, codigoPedido } = req.body;
 
     if (!clienteId || !pedidoId || !status) {
       return res.status(400).json({
@@ -112,32 +112,38 @@ router.post("/notify-client-order-status", async (req, res) => {
     const cliente = clienteDoc.data();
     const token = cliente?.expoPushToken;
 
+    const codigoLabel = codigoPedido ? `Pedido ${codigoPedido}` : "Seu pedido";
+
     const mensagens = {
-      aceito: {
-        title: "Pedido aceito",
-        body: "Seu pedido foi aceito e entrou em preparação.",
+      recebido: {
+        title: "📥 Pedido recebido!",
+        body: `${codigoLabel} foi recebido com sucesso 🙌`,
       },
-      preparando: {
-        title: "Pedido em preparo",
-        body: "Seu pedido está sendo preparado.",
+
+      em_preparo: {
+        title: "👨‍🍳 Em preparo",
+        body: `${codigoLabel} já está sendo preparado 😋`,
       },
-      saiu_entrega: {
-        title: "Saiu para entrega",
-        body: "Seu pedido saiu para entrega.",
+
+      pronto: {
+        title: "✅ Pedido pronto!",
+        body: `${codigoLabel} está pronto 🎉`,
       },
+
       entregue: {
-        title: "Pedido entregue",
-        body: "Seu pedido foi finalizado com sucesso.",
+        title: "🚚 Entregue!",
+        body: `${codigoLabel} foi entregue 🧡`,
       },
+
       cancelado: {
-        title: "Pedido cancelado",
-        body: "Seu pedido foi cancelado.",
+        title: "❌ Pedido cancelado",
+        body: `${codigoLabel} foi cancelado. Se precisar, fale com a gente 🙂`,
       },
     };
 
     const mensagem = mensagens[status] || {
       title: "Pedido atualizado",
-      body: `Seu pedido foi atualizado para: ${status}`,
+      body: `${codigoLabel} foi atualizado para: ${status}`,
     };
 
     const result = await sendPushNotifications(
@@ -149,7 +155,7 @@ router.post("/notify-client-order-status", async (req, res) => {
         pedidoId,
         status,
         screen: "MyOrders",
-      }
+      },
     );
 
     return res.json(result);
@@ -158,6 +164,56 @@ router.post("/notify-client-order-status", async (req, res) => {
     return res.status(500).json({
       success: false,
       error: "Erro ao notificar cliente",
+    });
+  }
+});
+
+router.post("/notify-admins-stock-alert", async (req, res) => {
+  try {
+    const { nomeProduto, quantidade, minimo, tipoAlerta } = req.body;
+
+    const db = getDb();
+    const adminsSnap = await db
+      .collection("usuarios")
+      .where("role", "==", "admin")
+      .get();
+
+    const tokens = [];
+
+    adminsSnap.forEach((doc) => {
+      const data = doc.data();
+      if (data?.expoPushToken) {
+        tokens.push(data.expoPushToken);
+      }
+    });
+
+    let title = "📦 Alerta de estoque";
+    let body = `${nomeProduto} está com estoque baixo.`;
+
+    if (tipoAlerta === "zerado") {
+      title = "🚨 Estoque zerado";
+      body = `${nomeProduto} zerou no estoque.`;
+    }
+
+    if (tipoAlerta === "minimo") {
+      title = "⚠️ Estoque no mínimo";
+      body = `${nomeProduto} chegou ao mínimo (${quantidade}/${minimo}).`;
+    }
+
+    const result = await sendPushNotifications(tokens, title, body, {
+      screen: "AdminStock",
+      nomeProduto,
+      quantidade,
+      minimo,
+      tipoAlerta,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error("[STOCK ALERT ERROR]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Erro ao notificar alerta de estoque",
     });
   }
 });
