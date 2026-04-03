@@ -4,6 +4,123 @@ const { sendPushNotifications } = require("../services/pushService");
 
 const router = express.Router();
 
+function getTipoAlertaEstoque(quantidade, minimo) {
+  if (quantidade === 0) return "zerado";
+  if (minimo > 0 && quantidade > 0 && quantidade <= minimo) return "minimo";
+  return null;
+}
+
+async function getAdminTokens() {
+  const db = getDb();
+
+  const adminsSnap = await db
+    .collection("usuarios")
+    .where("role", "==", "admin")
+    .get();
+
+  const tokens = [];
+
+  adminsSnap.forEach((docItem) => {
+    const data = docItem.data();
+    if (typeof data?.expoPushToken === "string" && data.expoPushToken.trim()) {
+      tokens.push(data.expoPushToken);
+    }
+  });
+
+  return tokens;
+}
+
+async function notifyAdminsStockAlert({
+  nomeProduto,
+  quantidade,
+  minimo,
+  tipoAlerta,
+}) {
+  const tokens = await getAdminTokens();
+
+  let title = "📦 Alerta de estoque";
+  let body = `${nomeProduto} está com estoque baixo.`;
+
+  if (tipoAlerta === "zerado") {
+    title = "🚨 Estoque zerado";
+    body = `${nomeProduto} zerou no estoque.`;
+  }
+
+  if (tipoAlerta === "minimo") {
+    title = "⚠️ Estoque no mínimo";
+    body = `${nomeProduto} chegou ao mínimo (${quantidade}/${minimo}).`;
+  }
+
+  return sendPushNotifications(tokens, title, body, {
+    screen: "AdminStock",
+    nomeProduto,
+    quantidade,
+    minimo,
+    tipoAlerta,
+  });
+}
+
+async function notifyClientOrderStatus({
+  clienteId,
+  pedidoId,
+  status,
+  codigoPedido,
+}) {
+  const db = getDb();
+  const clienteDoc = await db.collection("usuarios").doc(clienteId).get();
+
+  if (!clienteDoc.exists) {
+    return {
+      success: false,
+      error: "Cliente não encontrado",
+    };
+  }
+
+  const cliente = clienteDoc.data();
+  const token = cliente?.expoPushToken;
+  const codigoLabel = codigoPedido ? `Pedido ${codigoPedido}` : "Seu pedido";
+
+  const mensagens = {
+    recebido: {
+      title: "📥 Pedido recebido!",
+      body: `${codigoLabel} foi recebido com sucesso 🙌`,
+    },
+    em_preparo: {
+      title: "👨‍🍳 Em preparo",
+      body: `${codigoLabel} já está sendo preparado 😋`,
+    },
+    pronto: {
+      title: "✅ Pedido pronto!",
+      body: `${codigoLabel} está pronto 🎉`,
+    },
+    entregue: {
+      title: "🚚 Entregue!",
+      body: `${codigoLabel} foi entregue 🧡`,
+    },
+    cancelado: {
+      title: "❌ Pedido cancelado",
+      body: `${codigoLabel} foi cancelado. Se precisar, fale com a gente 🙂`,
+    },
+  };
+
+  const mensagem = mensagens[status] || {
+    title: "Pedido atualizado",
+    body: `${codigoLabel} foi atualizado para: ${status}`,
+  };
+
+  return sendPushNotifications(
+    token ? [token] : [],
+    mensagem.title,
+    mensagem.body,
+    {
+      type: "order_status",
+      pedidoId,
+      status,
+      screen: "MyOrders",
+    },
+  );
+}
+
 router.get("/health", async (_req, res) => {
   return res.json({
     ok: true,
@@ -50,20 +167,7 @@ router.post("/notify-admins-new-order", async (req, res) => {
       });
     }
 
-    const db = getDb();
-    const adminsSnap = await db
-      .collection("usuarios")
-      .where("role", "==", "admin")
-      .get();
-
-    const tokens = [];
-
-    adminsSnap.forEach((doc) => {
-      const data = doc.data();
-      if (data?.expoPushToken) {
-        tokens.push(data.expoPushToken);
-      }
-    });
+    const tokens = await getAdminTokens();
 
     const result = await sendPushNotifications(
       tokens,
@@ -99,64 +203,12 @@ router.post("/notify-client-order-status", async (req, res) => {
       });
     }
 
-    const db = getDb();
-    const clienteDoc = await db.collection("usuarios").doc(clienteId).get();
-
-    if (!clienteDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        error: "Cliente não encontrado",
-      });
-    }
-
-    const cliente = clienteDoc.data();
-    const token = cliente?.expoPushToken;
-
-    const codigoLabel = codigoPedido ? `Pedido ${codigoPedido}` : "Seu pedido";
-
-    const mensagens = {
-      recebido: {
-        title: "📥 Pedido recebido!",
-        body: `${codigoLabel} foi recebido com sucesso 🙌`,
-      },
-
-      em_preparo: {
-        title: "👨‍🍳 Em preparo",
-        body: `${codigoLabel} já está sendo preparado 😋`,
-      },
-
-      pronto: {
-        title: "✅ Pedido pronto!",
-        body: `${codigoLabel} está pronto 🎉`,
-      },
-
-      entregue: {
-        title: "🚚 Entregue!",
-        body: `${codigoLabel} foi entregue 🧡`,
-      },
-
-      cancelado: {
-        title: "❌ Pedido cancelado",
-        body: `${codigoLabel} foi cancelado. Se precisar, fale com a gente 🙂`,
-      },
-    };
-
-    const mensagem = mensagens[status] || {
-      title: "Pedido atualizado",
-      body: `${codigoLabel} foi atualizado para: ${status}`,
-    };
-
-    const result = await sendPushNotifications(
-      token ? [token] : [],
-      mensagem.title,
-      mensagem.body,
-      {
-        type: "order_status",
-        pedidoId,
-        status,
-        screen: "MyOrders",
-      },
-    );
+    const result = await notifyClientOrderStatus({
+      clienteId,
+      pedidoId,
+      status,
+      codigoPedido,
+    });
 
     return res.json(result);
   } catch (error) {
@@ -172,36 +224,7 @@ router.post("/notify-admins-stock-alert", async (req, res) => {
   try {
     const { nomeProduto, quantidade, minimo, tipoAlerta } = req.body;
 
-    const db = getDb();
-    const adminsSnap = await db
-      .collection("usuarios")
-      .where("role", "==", "admin")
-      .get();
-
-    const tokens = [];
-
-    adminsSnap.forEach((doc) => {
-      const data = doc.data();
-      if (data?.expoPushToken) {
-        tokens.push(data.expoPushToken);
-      }
-    });
-
-    let title = "📦 Alerta de estoque";
-    let body = `${nomeProduto} está com estoque baixo.`;
-
-    if (tipoAlerta === "zerado") {
-      title = "🚨 Estoque zerado";
-      body = `${nomeProduto} zerou no estoque.`;
-    }
-
-    if (tipoAlerta === "minimo") {
-      title = "⚠️ Estoque no mínimo";
-      body = `${nomeProduto} chegou ao mínimo (${quantidade}/${minimo}).`;
-    }
-
-    const result = await sendPushNotifications(tokens, title, body, {
-      screen: "AdminStock",
+    const result = await notifyAdminsStockAlert({
       nomeProduto,
       quantidade,
       minimo,
@@ -224,6 +247,7 @@ router.post("/update-order-status", async (req, res) => {
 
     if (!pedidoId || !novoStatus) {
       return res.status(400).json({
+        success: false,
         error: "pedidoId e novoStatus são obrigatórios",
       });
     }
@@ -234,53 +258,92 @@ router.post("/update-order-status", async (req, res) => {
     const pedidoSnap = await pedidoRef.get();
 
     if (!pedidoSnap.exists) {
-      return res.status(404).json({ error: "Pedido não encontrado" });
+      return res.status(404).json({
+        success: false,
+        error: "Pedido não encontrado",
+      });
     }
 
     const pedido = pedidoSnap.data();
 
-    // 🔥 1. Atualiza status
     await pedidoRef.update({
       status: novoStatus,
       updatedAt: new Date(),
     });
 
-    // 🔥 2. Se for recebido → baixa estoque
-    if (novoStatus === "recebido" && pedido.itens?.length) {
+    const estoqueLogs = [];
+
+    if (novoStatus === "recebido" && pedido?.itens?.length) {
       for (const item of pedido.itens) {
         if (!item.productId) continue;
 
-        const estoqueRef = db
+        const estoqueSnap = await db
           .collection("estoque")
-          .where("produtoId", "==", item.productId);
+          .where("produtoId", "==", item.productId)
+          .get();
 
-        const estoqueSnap = await estoqueRef.get();
+        if (estoqueSnap.empty) {
+          console.log(`[ESTOQUE] produtoId não encontrado: ${item.productId}`);
+          continue;
+        }
 
-        if (!estoqueSnap.empty) {
-          const estoqueDoc = estoqueSnap.docs[0];
-          const estoqueData = estoqueDoc.data();
+        const estoqueDoc = estoqueSnap.docs[0];
+        const estoqueData = estoqueDoc.data();
 
-          const novaQuantidade = Math.max(
-            0,
-            Number(estoqueData.quantidade || 0) -
-              Number(item.quantidade || 0),
-          );
+        const quantidadeAtual = Number(estoqueData.quantidade || 0);
+        const minimo = Number(estoqueData.minimo || 0);
+        const quantidadePedido = Number(item.quantidade || 0);
 
-          await estoqueDoc.ref.update({
+        const novaQuantidade = Math.max(0, quantidadeAtual - quantidadePedido);
+
+        const alertaAntes = getTipoAlertaEstoque(quantidadeAtual, minimo);
+        const alertaDepois = getTipoAlertaEstoque(novaQuantidade, minimo);
+
+        await estoqueDoc.ref.update({
+          quantidade: novaQuantidade,
+          updatedAt: new Date(),
+        });
+
+        estoqueLogs.push({
+          produtoId: item.productId,
+          nome: item.nome,
+          antes: quantidadeAtual,
+          depois: novaQuantidade,
+          minimo,
+        });
+
+        const entrouEmAlerta =
+          (!alertaAntes && !!alertaDepois) || alertaAntes !== alertaDepois;
+
+        if (alertaDepois && entrouEmAlerta) {
+          await notifyAdminsStockAlert({
+            nomeProduto: item.nome,
             quantidade: novaQuantidade,
-            updatedAt: new Date(),
+            minimo,
+            tipoAlerta: alertaDepois,
           });
         }
       }
     }
 
+    if (pedido?.userId) {
+      await notifyClientOrderStatus({
+        clienteId: pedido.userId,
+        pedidoId,
+        status: novoStatus,
+        codigoPedido: pedido.codigo,
+      });
+    }
+
     return res.json({
       success: true,
-      message: "Status atualizado e estoque ajustado",
+      message: "Status atualizado, estoque ajustado e notificações processadas",
+      estoqueLogs,
     });
   } catch (error) {
     console.log("[UPDATE ORDER ERROR]", error);
     return res.status(500).json({
+      success: false,
       error: "Erro ao atualizar pedido",
     });
   }
