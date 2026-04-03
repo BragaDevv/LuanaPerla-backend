@@ -53,7 +53,7 @@ router.post("/notify-admins-new-order", async (req, res) => {
     const db = getDb();
     const adminsSnap = await db
       .collection("usuarios")
-      .where("isAdmin", "==", true)
+      .where("role", "==", "admin")
       .get();
 
     const tokens = [];
