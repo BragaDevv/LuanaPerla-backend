@@ -218,4 +218,72 @@ router.post("/notify-admins-stock-alert", async (req, res) => {
   }
 });
 
+router.post("/update-order-status", async (req, res) => {
+  try {
+    const { pedidoId, novoStatus } = req.body;
+
+    if (!pedidoId || !novoStatus) {
+      return res.status(400).json({
+        error: "pedidoId e novoStatus são obrigatórios",
+      });
+    }
+
+    const db = getDb();
+
+    const pedidoRef = db.collection("pedidos").doc(pedidoId);
+    const pedidoSnap = await pedidoRef.get();
+
+    if (!pedidoSnap.exists) {
+      return res.status(404).json({ error: "Pedido não encontrado" });
+    }
+
+    const pedido = pedidoSnap.data();
+
+    // 🔥 1. Atualiza status
+    await pedidoRef.update({
+      status: novoStatus,
+      updatedAt: new Date(),
+    });
+
+    // 🔥 2. Se for aceito → baixa estoque
+    if (novoStatus === "aceito" && pedido.itens?.length) {
+      for (const item of pedido.itens) {
+        if (!item.productId) continue;
+
+        const estoqueRef = db
+          .collection("estoque")
+          .where("produtoId", "==", item.productId);
+
+        const estoqueSnap = await estoqueRef.get();
+
+        if (!estoqueSnap.empty) {
+          const estoqueDoc = estoqueSnap.docs[0];
+          const estoqueData = estoqueDoc.data();
+
+          const novaQuantidade = Math.max(
+            0,
+            Number(estoqueData.quantidade || 0) -
+              Number(item.quantidade || 0),
+          );
+
+          await estoqueDoc.ref.update({
+            quantidade: novaQuantidade,
+            updatedAt: new Date(),
+          });
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: "Status atualizado e estoque ajustado",
+    });
+  } catch (error) {
+    console.log("[UPDATE ORDER ERROR]", error);
+    return res.status(500).json({
+      error: "Erro ao atualizar pedido",
+    });
+  }
+});
+
 module.exports = router;
