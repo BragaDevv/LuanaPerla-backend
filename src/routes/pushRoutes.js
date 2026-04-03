@@ -245,8 +245,8 @@ router.post("/update-order-status", async (req, res) => {
       updatedAt: new Date(),
     });
 
-    // 🔥 2. Se for aceito → baixa estoque
-    if (novoStatus === "aceito" && pedido.itens?.length) {
+    // 🔥 2. Se for recebido → baixa estoque
+    if (novoStatus === "recebido" && pedido.itens?.length) {
       for (const item of pedido.itens) {
         if (!item.productId) continue;
 
