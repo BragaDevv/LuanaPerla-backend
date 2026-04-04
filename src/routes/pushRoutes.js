@@ -10,6 +10,49 @@ function getTipoAlertaEstoque(quantidade, minimo) {
   return null;
 }
 
+function getActiveDeviceToken(usuario) {
+  if (!usuario) return null;
+
+  const devices = Array.isArray(usuario.devices) ? usuario.devices : [];
+
+  const activeDevice = devices.find(
+    (device) =>
+      device &&
+      device.ativo === true &&
+      typeof device.token === "string" &&
+      device.token.trim(),
+  );
+
+  if (activeDevice?.token) {
+    return activeDevice.token;
+  }
+
+  // fallback temporário para não quebrar usuários antigos
+  if (
+    typeof usuario.expoPushToken === "string" &&
+    usuario.expoPushToken.trim()
+  ) {
+    return usuario.expoPushToken;
+  }
+
+  return null;
+}
+
+function getAllAdminActiveTokens(adminDocs) {
+  const tokens = [];
+
+  adminDocs.forEach((docItem) => {
+    const data = docItem.data();
+    const token = getActiveDeviceToken(data);
+
+    if (token) {
+      tokens.push(token);
+    }
+  });
+
+  return [...new Set(tokens)];
+}
+
 async function getAdminTokens() {
   const db = getDb();
 
@@ -18,16 +61,7 @@ async function getAdminTokens() {
     .where("role", "==", "admin")
     .get();
 
-  const tokens = [];
-
-  adminsSnap.forEach((docItem) => {
-    const data = docItem.data();
-    if (typeof data?.expoPushToken === "string" && data.expoPushToken.trim()) {
-      tokens.push(data.expoPushToken);
-    }
-  });
-
-  return tokens;
+  return getAllAdminActiveTokens(adminsSnap.docs);
 }
 
 async function notifyAdminsStockAlert({
@@ -77,17 +111,21 @@ async function notifyClientOrderStatus({
   }
 
   const cliente = clienteDoc.data();
-  const token = cliente?.expoPushToken;
+  const token = getActiveDeviceToken(cliente);
   const codigoLabel = codigoPedido ? `Pedido ${codigoPedido}` : "Seu pedido";
 
   const mensagens = {
     recebido: {
-      title: "📥 Pedido recebido!",
-      body: `${codigoLabel} foi recebido com sucesso 🙌`,
+      title: "📥 Pedido Aceito!",
+      body: `${codigoLabel} foi aceito com sucesso 🙌`,
     },
     em_preparo: {
       title: "👨‍🍳 Em preparo",
       body: `${codigoLabel} já está sendo preparado 😋`,
+    },
+    rota_entrega: {
+      title: "🚀​ Em rota",
+      body: `${codigoLabel} está em rota para entrega 🚚`,
     },
     pronto: {
       title: "✅ Pedido pronto!",
@@ -95,7 +133,7 @@ async function notifyClientOrderStatus({
     },
     entregue: {
       title: "🚚 Entregue!",
-      body: `${codigoLabel} foi entregue 🧡`,
+      body: `${codigoLabel} foi entregue 😋`,
     },
     cancelado: {
       title: "❌ Pedido cancelado",
