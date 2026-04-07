@@ -1,3 +1,5 @@
+//pushRoutes.js - rotas para notificações push e atualizações relacionadas a pedidos e estoque
+
 const express = require("express");
 const { getDb } = require("../config/firebase");
 const { sendPushNotifications } = require("../services/pushService");
