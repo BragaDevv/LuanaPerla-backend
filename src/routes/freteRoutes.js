@@ -31,17 +31,36 @@ router.post("/calcular", async (req, res) => {
       .filter(Boolean)
       .join(", ");
 
-    const destino = await geocodificarEndereco(enderecoCompleto);
-
     const origemLat = Number(process.env.LOJA_LAT);
     const origemLng = Number(process.env.LOJA_LNG);
 
-    if (!origemLat || !origemLng) {
+    if (Number.isNaN(origemLat) || Number.isNaN(origemLng)) {
       return res.status(500).json({
         ok: false,
-        message: "Coordenadas da loja não configuradas.",
+        message: "Coordenadas da loja não configuradas corretamente.",
       });
     }
+
+    console.log("[FRETE] origem loja:", {
+      origemLat,
+      origemLng,
+    });
+
+    console.log("[FRETE] endereço recebido:", {
+      cep,
+      rua,
+      numero,
+      bairro,
+      cidade,
+      estado,
+      complemento,
+    });
+
+    console.log("[FRETE] endereço montado:", enderecoCompleto);
+
+    const destino = await geocodificarEndereco(enderecoCompleto);
+
+    console.log("[FRETE] destino geocodificado:", destino);
 
     const rota = await calcularRota({
       origemLat,
@@ -57,14 +76,24 @@ router.post("/calcular", async (req, res) => {
       enderecoFormatado: destino.enderecoFormatado,
       distanceMeters: rota.distanceMeters,
       duration: rota.duration,
+      detalhesGeocoding: destino.detalhes,
       ...freteInfo,
     });
   } catch (error) {
     console.error("[FRETE] erro ao calcular frete:", error);
 
-    return res.status(500).json({
+    const message = error?.message || "Erro ao calcular frete.";
+
+    const isErroEndereco =
+      message.includes("Endereço incompleto") ||
+      message.includes("Endereço não encontrado") ||
+      message.includes("Não foi possível localizar o número exato") ||
+      message.includes("Coordenadas não encontradas") ||
+      message.includes("Erro no Geocoding");
+
+    return res.status(isErroEndereco ? 400 : 500).json({
       ok: false,
-      message: error.message || "Erro ao calcular frete.",
+      message,
     });
   }
 });
