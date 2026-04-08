@@ -9,7 +9,18 @@ const {
 
 router.post("/calcular", async (req, res) => {
   try {
-    const { cep, rua, numero, bairro, cidade, estado, complemento } = req.body;
+    const {
+      cep,
+      rua,
+      numero,
+      bairro,
+      cidade,
+      estado,
+      complemento,
+      freteMinimo,
+      taxaBase,
+      valorKm,
+    } = req.body;
 
     if (!cep || !rua || !numero || !bairro || !cidade || !estado) {
       return res.status(400).json({
@@ -54,6 +65,9 @@ router.post("/calcular", async (req, res) => {
       cidade,
       estado,
       complemento,
+      freteMinimo,
+      taxaBase,
+      valorKm,
     });
 
     console.log("[FRETE] endereço montado:", enderecoCompleto);
@@ -69,7 +83,11 @@ router.post("/calcular", async (req, res) => {
       destinoLng: destino.lng,
     });
 
-    const freteInfo = calcularValorFrete(rota.distanceMeters);
+    const freteInfo = calcularValorFrete(rota.distanceMeters, {
+      freteMinimo,
+      taxaBase,
+      valorKm,
+    });
 
     return res.status(200).json({
       ok: true,
@@ -87,9 +105,10 @@ router.post("/calcular", async (req, res) => {
     const isErroEndereco =
       message.includes("Endereço incompleto") ||
       message.includes("Endereço não encontrado") ||
-      message.includes("Não foi possível localizar o número exato") ||
+      message.includes("Não foi possível localizar") ||
       message.includes("Coordenadas não encontradas") ||
-      message.includes("Erro no Geocoding");
+      message.includes("Erro no Geocoding") ||
+      message.includes("Configuração de frete inválida");
 
     return res.status(isErroEndereco ? 400 : 500).json({
       ok: false,

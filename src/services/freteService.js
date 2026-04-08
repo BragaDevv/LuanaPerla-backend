@@ -46,8 +46,15 @@ async function geocodificarEndereco(enderecoCompleto) {
   const postalCode = extrairComponente(addressComponents, "postal_code");
 
   const encontrouNumeroExato = Boolean(streetNumber);
-  const resultadoApenasRua =
-    resultTypes.includes("route") || locationType === "GEOMETRIC_CENTER";
+
+  const enderecoExato = locationType === "ROOFTOP";
+  const enderecoAproximadoAceitavel = locationType === "RANGE_INTERPOLATED";
+
+  const resultadoRuim =
+    locationType === "GEOMETRIC_CENTER" ||
+    (resultTypes.includes("route") &&
+      !encontrouNumeroExato &&
+      !enderecoAproximadoAceitavel);
 
   console.log("[FRETE] validação geocoding:", {
     partialMatch,
@@ -57,10 +64,18 @@ async function geocodificarEndereco(enderecoCompleto) {
     routeName,
     postalCode,
     encontrouNumeroExato,
-    resultadoApenasRua,
+    enderecoExato,
+    enderecoAproximadoAceitavel,
+    resultadoRuim,
   });
 
-  if (partialMatch || !encontrouNumeroExato || resultadoApenasRua) {
+  if (resultadoRuim) {
+    throw new Error(
+      "Não foi possível localizar esse endereço com precisão suficiente. Confira CEP, rua e número.",
+    );
+  }
+
+  if (!enderecoExato && !enderecoAproximadoAceitavel && !encontrouNumeroExato) {
     throw new Error(
       "Não foi possível localizar o número exato do endereço. Confira CEP, rua e número.",
     );
@@ -77,6 +92,8 @@ async function geocodificarEndereco(enderecoCompleto) {
       streetNumber,
       routeName,
       postalCode,
+      enderecoExato,
+      enderecoAproximado: !enderecoExato && enderecoAproximadoAceitavel,
     },
   };
 }
@@ -132,10 +149,18 @@ async function calcularRota({ origemLat, origemLng, destinoLat, destinoLng }) {
   };
 }
 
-function calcularValorFrete(distanceMeters) {
-  const taxaBase = 6;
-  const valorKm = 2.5;
-  const freteMinimo = 8;
+function calcularValorFrete(distanceMeters, config = {}) {
+  const taxaBase = Number(config.taxaBase ?? 6);
+  const valorKm = Number(config.valorKm ?? 2.5);
+  const freteMinimo = Number(config.freteMinimo ?? 8);
+
+  if (
+    Number.isNaN(taxaBase) ||
+    Number.isNaN(valorKm) ||
+    Number.isNaN(freteMinimo)
+  ) {
+    throw new Error("Configuração de frete inválida.");
+  }
 
   const distanceKm = distanceMeters / 1000;
   const freteBruto = taxaBase + distanceKm * valorKm;
