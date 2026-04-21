@@ -281,6 +281,46 @@ router.post("/notify-admins-stock-alert", async (req, res) => {
   }
 });
 
+router.post("/send", async (req, res) => {
+  try {
+    const { tokens, title, body, data } = req.body;
+
+    console.log("[SEND ALL] body:", req.body);
+
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Nenhum token enviado.",
+      });
+    }
+
+    if (!title || !body) {
+      return res.status(400).json({
+        success: false,
+        message: "Título e mensagem são obrigatórios.",
+      });
+    }
+
+    const result = await sendPushNotifications(tokens, title, body, data || {});
+
+    console.log("[SEND ALL] resultado:", result);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[SEND ALL ERROR]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Erro ao enviar notificação.",
+      error: error?.message || String(error),
+    });
+  }
+});
+
 router.post("/update-order-status", async (req, res) => {
   try {
     const { pedidoId, novoStatus } = req.body;
