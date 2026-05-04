@@ -6,6 +6,8 @@ const {
   consultarPagamento,
 } = require("../services/mercadoPagoService");
 
+const { enviarPushPagamentoAprovado } = require("../services/pushService");
+
 const { getDb } = require("../config/firebase");
 const db = getDb();
 
@@ -15,6 +17,40 @@ function getBackendUrl(req) {
   }
 
   return `${req.protocol}://${req.get("host")}`;
+}
+
+async function notificarClienteSePagamentoAprovou({
+  pedidoId,
+  statusNovo,
+  pedidoAntes,
+}) {
+  if (statusNovo !== "approved") return;
+
+  const jaEstavaPago =
+    pedidoAntes?.statusPagamento === "approved" ||
+    pedidoAntes?.pagamento?.status === "approved" ||
+    pedidoAntes?.pago === true;
+
+  if (jaEstavaPago) {
+    console.log("ℹ️ Pedido já estava pago. Push não reenviado:", pedidoId);
+    return;
+  }
+
+  const pedidoSnapDepois = await db
+    .collection("pedidos")
+    .doc(String(pedidoId))
+    .get();
+
+  if (!pedidoSnapDepois.exists) {
+    console.log("⚠️ Pedido não encontrado após update:", pedidoId);
+    return;
+  }
+
+  await enviarPushPagamentoAprovado({
+    db,
+    pedidoId: String(pedidoId),
+    pedido: pedidoSnapDepois.data(),
+  });
 }
 
 // Criar Pix
@@ -122,6 +158,12 @@ router.get("/:paymentId/status", async (req, res) => {
     const status = payment.status;
 
     if (pedidoId) {
+      const pedidoRef = db.collection("pedidos").doc(String(pedidoId));
+      const pedidoSnapAntes = await pedidoRef.get();
+      const pedidoAntes = pedidoSnapAntes.exists
+        ? pedidoSnapAntes.data()
+        : null;
+
       const updateData = {
         statusPagamento: status,
         "pagamento.status": status,
@@ -140,8 +182,14 @@ router.get("/:paymentId/status", async (req, res) => {
         updateData.status = "pagamento_recusado";
       }
 
-      await db.collection("pedidos").doc(String(pedidoId)).set(updateData, {
+      await pedidoRef.set(updateData, {
         merge: true,
+      });
+
+      await notificarClienteSePagamentoAprovou({
+        pedidoId,
+        statusNovo: status,
+        pedidoAntes,
       });
     }
 
@@ -211,8 +259,18 @@ router.post("/webhook/mercadopago", async (req, res) => {
       updateData.status = "pagamento_recusado";
     }
 
-    await db.collection("pedidos").doc(String(pedidoId)).set(updateData, {
+    const pedidoRef = db.collection("pedidos").doc(String(pedidoId));
+    const pedidoSnapAntes = await pedidoRef.get();
+    const pedidoAntes = pedidoSnapAntes.exists ? pedidoSnapAntes.data() : null;
+
+    await pedidoRef.set(updateData, {
       merge: true,
+    });
+
+    await notificarClienteSePagamentoAprovou({
+      pedidoId,
+      statusNovo: status,
+      pedidoAntes,
     });
 
     console.log(`✅ Pedido ${pedidoId} atualizado. Pagamento: ${status}`);
