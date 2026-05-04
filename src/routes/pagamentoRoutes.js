@@ -19,37 +19,40 @@ function getBackendUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
-async function notificarClienteSePagamentoAprovou({
-  pedidoId,
-  statusNovo,
-  pedidoAntes,
-}) {
+async function notificarClienteSePagamentoAprovou({ pedidoId, statusNovo }) {
   if (statusNovo !== "approved") return;
 
-  const jaEstavaPago =
-    pedidoAntes?.statusPagamento === "approved" ||
-    pedidoAntes?.pagamento?.status === "approved" ||
-    pedidoAntes?.pago === true;
+  const pedidoRef = db.collection("pedidos").doc(String(pedidoId));
 
-  if (jaEstavaPago) {
-    console.log("ℹ️ Pedido já estava pago. Push não reenviado:", pedidoId);
+  const pedidoSnap = await pedidoRef.get();
+
+  if (!pedidoSnap.exists) {
+    console.log("⚠️ Pedido não encontrado para push:", pedidoId);
     return;
   }
 
-  const pedidoSnapDepois = await db
-    .collection("pedidos")
-    .doc(String(pedidoId))
-    .get();
+  const pedido = pedidoSnap.data();
 
-  if (!pedidoSnapDepois.exists) {
-    console.log("⚠️ Pedido não encontrado após update:", pedidoId);
+  const pushJaEnviado = pedido?.pushPagamentoAprovadoEnviado === true;
+
+  if (pushJaEnviado) {
+    console.log("ℹ️ Push de pagamento já enviado:", pedidoId);
     return;
   }
+
+  // Marca ANTES de enviar, para evitar duplicidade se webhook e consulta rodarem juntos
+  await pedidoRef.set(
+    {
+      pushPagamentoAprovadoEnviado: true,
+      pushPagamentoAprovadoEnviadoEm: new Date(),
+    },
+    { merge: true },
+  );
 
   await enviarPushPagamentoAprovado({
     db,
     pedidoId: String(pedidoId),
-    pedido: pedidoSnapDepois.data(),
+    pedido,
   });
 }
 
@@ -189,7 +192,6 @@ router.get("/:paymentId/status", async (req, res) => {
       await notificarClienteSePagamentoAprovou({
         pedidoId,
         statusNovo: status,
-        pedidoAntes,
       });
     }
 
@@ -270,7 +272,6 @@ router.post("/webhook/mercadopago", async (req, res) => {
     await notificarClienteSePagamentoAprovou({
       pedidoId,
       statusNovo: status,
-      pedidoAntes,
     });
 
     console.log(`✅ Pedido ${pedidoId} atualizado. Pagamento: ${status}`);
