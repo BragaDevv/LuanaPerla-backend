@@ -24,35 +24,44 @@ async function notificarClienteSePagamentoAprovou({ pedidoId, statusNovo }) {
 
   const pedidoRef = db.collection("pedidos").doc(String(pedidoId));
 
-  const pedidoSnap = await pedidoRef.get();
+  let pedidoParaNotificar = null;
 
-  if (!pedidoSnap.exists) {
-    console.log("⚠️ Pedido não encontrado para push:", pedidoId);
-    return;
-  }
+  await db.runTransaction(async (transaction) => {
+    const pedidoSnap = await transaction.get(pedidoRef);
 
-  const pedido = pedidoSnap.data();
+    if (!pedidoSnap.exists) {
+      console.log("⚠️ Pedido não encontrado para push:", pedidoId);
+      return;
+    }
 
-  const pushJaEnviado = pedido?.pushPagamentoAprovadoEnviado === true;
+    const pedido = pedidoSnap.data();
 
-  if (pushJaEnviado) {
-    console.log("ℹ️ Push de pagamento já enviado:", pedidoId);
-    return;
-  }
+    const pushJaEnviado = pedido?.pushPagamentoAprovadoEnviado === true;
 
-  // Marca ANTES de enviar, para evitar duplicidade se webhook e consulta rodarem juntos
-  await pedidoRef.set(
-    {
-      pushPagamentoAprovadoEnviado: true,
-      pushPagamentoAprovadoEnviadoEm: new Date(),
-    },
-    { merge: true },
-  );
+    if (pushJaEnviado) {
+      console.log("ℹ️ Push de pagamento já enviado:", pedidoId);
+      return;
+    }
+
+    // Marca dentro da transaction para impedir duplicidade
+    transaction.set(
+      pedidoRef,
+      {
+        pushPagamentoAprovadoEnviado: true,
+        pushPagamentoAprovadoEnviadoEm: new Date(),
+      },
+      { merge: true },
+    );
+
+    pedidoParaNotificar = pedido;
+  });
+
+  if (!pedidoParaNotificar) return;
 
   await enviarPushPagamentoAprovado({
     db,
     pedidoId: String(pedidoId),
-    pedido,
+    pedido: pedidoParaNotificar,
   });
 }
 
@@ -351,7 +360,7 @@ router.post("/cartao/status", async (req, res) => {
     await pedidoRef.set(updateData, { merge: true });
 
     await notificarClienteSePagamentoAprovou({
-      pedidoId: String(pedidoId),
+      pedidoId,
       statusNovo: novoStatusPagamento,
     });
 
