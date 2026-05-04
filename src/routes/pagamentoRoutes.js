@@ -283,4 +283,92 @@ router.post("/webhook/mercadopago", async (req, res) => {
   }
 });
 
+router.post("/cartao/status", async (req, res) => {
+  try {
+    const { pedidoId, novoStatusPagamento } = req.body;
+
+    if (!pedidoId) {
+      return res.status(400).json({
+        success: false,
+        error: "pedidoId é obrigatório.",
+      });
+    }
+
+    if (!novoStatusPagamento) {
+      return res.status(400).json({
+        success: false,
+        error: "novoStatusPagamento é obrigatório.",
+      });
+    }
+
+    const pedidoRef = db.collection("pedidos").doc(String(pedidoId));
+    const pedidoSnap = await pedidoRef.get();
+
+    if (!pedidoSnap.exists) {
+      return res.status(404).json({
+        success: false,
+        error: "Pedido não encontrado.",
+      });
+    }
+
+    const pedidoAntes = pedidoSnap.data();
+
+    const metodoPagamento =
+      pedidoAntes?.metodoPagamento || pedidoAntes?.pagamento?.metodo;
+
+    if (metodoPagamento !== "cartao") {
+      return res.status(400).json({
+        success: false,
+        error: "Apenas pagamentos por cartão podem ser alterados manualmente.",
+      });
+    }
+
+    const pago = novoStatusPagamento === "approved";
+
+    const updateData = {
+      statusPagamento: novoStatusPagamento,
+      pago,
+      "pagamento.status": novoStatusPagamento,
+      "pagamento.atualizadoEm": new Date(),
+    };
+
+    if (novoStatusPagamento === "approved") {
+      updateData.pagoEm = new Date();
+
+      if (pedidoAntes.status === "aguardando_pagamento") {
+        updateData.status = "pendente";
+      }
+    }
+
+    if (
+      novoStatusPagamento === "rejected" ||
+      novoStatusPagamento === "cancelled" ||
+      novoStatusPagamento === "canceled"
+    ) {
+      updateData.pago = false;
+    }
+
+    await pedidoRef.set(updateData, { merge: true });
+
+    await notificarClienteSePagamentoAprovou({
+      pedidoId: String(pedidoId),
+      statusNovo: novoStatusPagamento,
+    });
+
+    return res.json({
+      success: true,
+      pedidoId,
+      statusPagamento: novoStatusPagamento,
+      pago,
+    });
+  } catch (error) {
+    console.log("❌ Erro ao atualizar pagamento cartão:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Erro ao atualizar pagamento do cartão.",
+    });
+  }
+});
+
 module.exports = router;
