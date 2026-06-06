@@ -353,7 +353,14 @@ router.post("/update-order-status", async (req, res) => {
 
     const estoqueLogs = [];
 
-    if (novoStatus === "recebido" && pedido?.itens?.length) {
+    // Baixa de estoque só na primeira vez que o pedido entra em "recebido".
+    // pedido.estoqueBaixado evita baixa dupla caso o status volte para "recebido"
+    // (ex.: admin corrige um clique e volta de em_preparo -> recebido).
+    if (
+      novoStatus === "recebido" &&
+      !pedido?.estoqueBaixado &&
+      pedido?.itens?.length
+    ) {
       for (const item of pedido.itens) {
         if (!item.productId) continue;
 
@@ -404,6 +411,9 @@ router.post("/update-order-status", async (req, res) => {
           });
         }
       }
+
+      // marca que o estoque já foi abatido para este pedido
+      await pedidoRef.update({ estoqueBaixado: true });
     }
 
     if (pedido?.userId) {
