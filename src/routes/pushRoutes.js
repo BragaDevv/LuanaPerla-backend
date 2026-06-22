@@ -416,6 +416,54 @@ router.post("/update-order-status", async (req, res) => {
       await pedidoRef.update({ estoqueBaixado: true });
     }
 
+    // Estorno de estoque ao cancelar: devolve as quantidades se o estoque
+    // já havia sido baixado (pedido passou por "recebido"). O flag
+    // estoqueBaixado evita estorno duplicado e mantém a baixa correta caso
+    // o pedido seja reaberto para "recebido" depois.
+    if (
+      novoStatus === "cancelado" &&
+      pedido?.estoqueBaixado &&
+      pedido?.itens?.length
+    ) {
+      for (const item of pedido.itens) {
+        if (!item.productId) continue;
+
+        const estoqueSnap = await db
+          .collection("estoque")
+          .where("produtoId", "==", item.productId)
+          .get();
+
+        if (estoqueSnap.empty) {
+          console.log(`[ESTOQUE] produtoId não encontrado: ${item.productId}`);
+          continue;
+        }
+
+        const estoqueDoc = estoqueSnap.docs[0];
+        const estoqueData = estoqueDoc.data();
+
+        const quantidadeAtual = Number(estoqueData.quantidade || 0);
+        const quantidadePedido = Number(item.quantidade || 0);
+
+        const novaQuantidade = quantidadeAtual + quantidadePedido;
+
+        await estoqueDoc.ref.update({
+          quantidade: novaQuantidade,
+          updatedAt: new Date(),
+        });
+
+        estoqueLogs.push({
+          produtoId: item.productId,
+          nome: item.nome,
+          antes: quantidadeAtual,
+          depois: novaQuantidade,
+          estorno: true,
+        });
+      }
+
+      // libera o flag para impedir estorno duplicado
+      await pedidoRef.update({ estoqueBaixado: false });
+    }
+
     if (pedido?.userId) {
       await notifyClientOrderStatus({
         clienteId: pedido.userId,
