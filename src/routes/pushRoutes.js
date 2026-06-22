@@ -1,10 +1,50 @@
 //pushRoutes.js - rotas para notificações push e atualizações relacionadas a pedidos e estoque
 
 const express = require("express");
-const { getDb } = require("../config/firebase");
+const { getDb, getFirebaseAdmin } = require("../config/firebase");
 const { sendPushNotifications } = require("../services/pushService");
 
 const router = express.Router();
+
+// Garante que a requisição vem de um admin autenticado: valida o ID token do
+// Firebase enviado no header Authorization e confere role === "admin".
+async function requireAdmin(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: "Token de autenticação ausente.",
+      });
+    }
+
+    const admin = getFirebaseAdmin();
+    const decoded = await admin.auth().verifyIdToken(token);
+
+    const db = getDb();
+    const userSnap = await db.collection("usuarios").doc(decoded.uid).get();
+
+    if (!userSnap.exists || userSnap.data()?.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        error: "Acesso restrito a administradores.",
+      });
+    }
+
+    req.adminUid = decoded.uid;
+    return next();
+  } catch (error) {
+    console.log("[AUTH] falha ao validar token admin:", error?.message || error);
+    return res.status(401).json({
+      success: false,
+      error: "Token inválido ou expirado.",
+    });
+  }
+}
 
 function getTipoAlertaEstoque(quantidade, minimo) {
   if (quantidade === 0) return "zerado";
@@ -321,7 +361,7 @@ router.post("/send", async (req, res) => {
   }
 });
 
-router.post("/update-order-status", async (req, res) => {
+router.post("/update-order-status", requireAdmin, async (req, res) => {
   try {
     const { pedidoId, novoStatus } = req.body;
 
